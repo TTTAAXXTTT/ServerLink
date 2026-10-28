@@ -1,0 +1,37 @@
+name: 问题反馈
+description: 使用虚构内容提供可复现的问题。
+body:
+  - type: markdown
+    attributes:
+      value: 请勿填写密码、配对信息、服务器 IP、私钥、聊天原文或未打码截图。
+  - type: input
+    id: version
+    attributes:
+      label: ServerLink / Windows / Claude 版本
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 若与空行有关，说明正文行数、末尾换行次数和代码围栏；使用虚构文字。
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: dropdown
+    id: rdp
+    attributes:
+      label: 服务器远程桌面状态
+      options:
+        - 已连接
+        - 已断开
+        - 不确定
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏错误文字与检查结果
