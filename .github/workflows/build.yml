@@ -1,0 +1,47 @@
+name: Windows build and isolated checks
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out this public repository at the event commit
+        shell: pwsh
+        env:
+          SOURCE_REPOSITORY: https://github.com/${{ github.repository }}.git
+          SOURCE_COMMIT: ${{ github.sha }}
+          GIT_TERMINAL_PROMPT: '0'
+        run: |
+          git init .
+          if ($LASTEXITCODE -ne 0) { throw 'Repository initialization failed.' }
+          git remote add origin $env:SOURCE_REPOSITORY
+          if ($LASTEXITCODE -ne 0) { throw 'Origin configuration failed.' }
+          git fetch --no-tags --depth=1 origin $env:SOURCE_COMMIT
+          if ($LASTEXITCODE -ne 0) { throw 'Commit fetch failed.' }
+          git checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Checkout failed.' }
+          $actualCommit = (git rev-parse HEAD).Trim()
+          if ($actualCommit -ne $env:SOURCE_COMMIT) { throw 'Unexpected source commit.' }
+      - name: Build local client and server programs
+        shell: pwsh
+        run: .\build.ps1 -OutputDirectory .\dist
+      - name: Run isolated checks only
+        shell: pwsh
+        run: .\test.ps1
+      - name: Summarize checks
+        if: always()
+        shell: pwsh
+        run: |
+          '## Isolated regression reports' | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          Get-ChildItem .\test-build\*-regression.txt -ErrorAction SilentlyContinue | ForEach-Object {
+            ('### ' + $_.Name) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            Get-Content -LiteralPath $_.FullName | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
