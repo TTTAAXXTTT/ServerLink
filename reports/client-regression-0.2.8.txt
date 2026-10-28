@@ -1,0 +1,27 @@
+PASS A single content line with trailing empty lines is submitted once as that line and clears its original draft
+PASS Trailing-line handling leaves multiline bodies, leading blank lines and code fences unchanged
+PASS Editing only trailing blank lines while a send is in flight preserves the new draft
+PASS A definitive rejection keeps the complete original single-line draft for manual retry
+PASS New and legacy pending drafts survive serialization and confirm after reconnect without any resend
+PASS Rendered fenced code omits only fences and keeps code indentation and internal blank lines exact
+PASS Paragraph display folding confirms only a newly indexed matching body and keeps raw outgoing text
+PASS Blank-line display matching does not clear a new edited draft or accept an old message
+PASS Background synchronization does not toggle Send; a click queues exactly once behind an in-flight refresh
+PASS A draft typed while an earlier send is pending is preserved
+PASS Drafts are not silently sent into a different server conversation
+PASS A queued send retains its original conversation and errors survive later refreshes
+PASS Connection failure during a refresh does not submit a waiting message
+PASS History selection also queues behind synchronization instead of disappearing
+PASS A definite server draft rejection preserves local text and permits a later manual send
+PASS Bridge acknowledgement alone does not clear the draft or allow duplicate sends
+PASS An old identical user message cannot confirm a new submission
+PASS A temporary empty UI snapshot preserves the transcript and repeated failures block keyboard sends
+PASS A queued refresh advances the confirmation baseline before submitting an identical message
+PASS An unconfirmed message blocks history changes without losing its confirmation state
+PASS A structured pre-submission rejection unlocks Send and preserves the complete draft
+PASS Streaming extends the final message and later append/edit does not duplicate earlier messages
+PASS Draft recovery preserves local text and only addresses the exact current server draft
+PASS Recovering a draft does not declare a previous unknown submission delivered or rejected
+PASS Persisted drafts retain the pending message and confirmation boundary through serialization
+PASS Delayed draft clearing is confirmed by a fresh whitespace-only UIA value without another mutation
+RESULT PASS. Isolated client-only in-memory transport; no server Agent, TLS listener, pairing credentials or Claude access.

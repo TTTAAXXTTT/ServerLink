@@ -1,0 +1,6 @@
+PASS ServerLink.Client.exe: version 0.2.8.0 and exact author text embedded.
+PASS ServerLink.Agent.exe: version 0.2.8.0 and exact author text embedded.
+PASS ServerLink.Host.exe: version 0.2.8.0 and exact author text embedded.
+PASS Exact author text is visible; the background message loop continues before dismissal.
+PASS Dismissing the notice does not stop the background message loop.
+RESULT PASS. Isolated popup preview; no server, listener, credentials or draft access.

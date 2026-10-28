@@ -1,0 +1,7 @@
+PASS 150 message groups retain their roles and exact text; toolbar excluded. Parse ms=9
+PASS Truncated snapshots block sending.
+PASS Observed Chromium paragraph nodes, explicit newline nodes and indentation survive readback.
+PASS CRLF and exactly one extra UIA newline accepted; changed text or extra blank lines rejected.
+PASS Recovery requires exact session/text and latest prepared stage; unknown/submitting outcome rejected.
+PASS Protocol frame uses one write with a correct length prefix and unchanged payload.
+RESULT PASS. Pure data fixtures; no desktop, socket, server or credentials accessed.
