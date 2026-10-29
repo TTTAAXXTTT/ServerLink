@@ -16,10 +16,10 @@ namespace ServerLink
         public static ChatState Parse(DesktopSnapshot snapshot)
         {
             var state=new ChatState {Version=snapshot.ProcessVersion,CapturedUtc=snapshot.CapturedUtc,Error=snapshot.Truncated?"服务器界面内容超出本次读取范围，暂未开放安全发送。":snapshot.Error};var children=snapshot.Nodes.ToLookup(n=>n.Parent);
-            var document=snapshot.Nodes.FirstOrDefault(n=>n.Type=="ControlType.Document"&&(n.Value??"").StartsWith("https://claude.ai/",StringComparison.OrdinalIgnoreCase));
+            var documents=snapshot.Nodes.Where(n=>n.Type=="ControlType.Document"&&(n.Value??"").StartsWith("https://claude.ai/",StringComparison.OrdinalIgnoreCase)).ToList();var document=documents.Count==1?documents[0]:null;state.PageKind="unavailable";
             if(document!=null)
             {
-                var match=Regex.Match(document.Value,@"^https://claude\.ai/chat/([a-f0-9-]{36})(?:[/?#]|$)",RegexOptions.IgnoreCase);state.SessionId=match.Success?match.Groups[1].Value:"new";state.Title=(document.Name??"").Replace(" - Claude","");
+                var match=Regex.Match(document.Value,@"^https://claude\.ai/chat/([a-f0-9-]{36})(?:[/?#]|$)",RegexOptions.IgnoreCase);state.SessionId=match.Success?match.Groups[1].Value:"";state.PageKind=match.Success?"chat":Regex.IsMatch(document.Value,@"^https://claude\.ai/(?:new)?(?:[?#].*)?$",RegexOptions.IgnoreCase)?"blank":"other";state.Title=(document.Name??"").Replace(" - Claude","");
             }
             foreach(var group in snapshot.Nodes.Where(n=>n.Type=="ControlType.Group"&&MessageGroup.IsMatch(n.Name??"")))
             {
@@ -42,7 +42,8 @@ namespace ServerLink
             }
             state.Generating=snapshot.Nodes.Any(n=>n.Type=="ControlType.Button"&&IsStop(n.Name));
             var composers=snapshot.Nodes.Where(IsComposer).ToList();state.DraftText=composers.Count==1?composers[0].Value:null;
-            state.CanSend=!snapshot.Truncated&&String.IsNullOrEmpty(snapshot.Error)&&!state.Generating&&snapshot.Nodes.Count(IsComposer)==1&&document!=null;
+            if(state.PageKind=="blank"&&state.Messages.Count>0)state.PageKind="loading";
+            state.CanSend=!snapshot.Truncated&&String.IsNullOrEmpty(snapshot.Error)&&!state.Generating&&snapshot.Nodes.Count(IsComposer)==1&&(state.PageKind=="chat"||state.PageKind=="blank");
             state.Capabilities.Add("read-current-chat");state.Capabilities.Add("open-recent-chat");if(state.CanSend)state.Capabilities.Add("send-to-current-chat");if(state.Generating)state.Capabilities.Add("stop-response");
             return state;
         }
@@ -53,14 +54,15 @@ namespace ServerLink
     }
     sealed class HistoryTarget {public string Handle;public string Name;public AutomationElement Element;public DateTime Seen;}
     public sealed class SendRecord {public string Id {get;set;} public string Hash {get;set;} public string Stage {get;set;}}
-    public sealed class DesktopAdapter : IChatAdapter,IDraftRecoveryAdapter
+    public sealed partial class DesktopAdapter : IChatAdapter,IDraftRecoveryAdapter,INavigationAdapter
     {
         readonly DesktopReader reader=new DesktopReader();readonly Dictionary<string,HistoryTarget> history=new Dictionary<string,HistoryTarget>();readonly string journalPath;
         List<SendRecord> sends;DesktopSnapshot snapshot;ChatState state;
-        public DesktopAdapter(string directory){journalPath=Path.Combine(directory,"operations.dat");sends=File.Exists(journalPath)?Secrets.Load<List<SendRecord>>(journalPath):new List<SendRecord>();}
+        public DesktopAdapter(string directory){journalPath=Path.Combine(directory,"operations.dat");sends=File.Exists(journalPath)?Secrets.Load<List<SendRecord>>(journalPath):new List<SendRecord>();LoadNavigation(directory);}
         public ChatState Read()
         {
             snapshot=reader.Read();state=DesktopParser.Parse(snapshot);DateTime now=DateTime.UtcNow;
+            DecorateNavigation();
             state.DraftPreparedByBridge=CanRecoverDraft(sends,state.SessionId,state.DraftText);state.DraftRecoveryAvailable=!String.IsNullOrWhiteSpace(state.DraftText)&&state.CanSend;
             foreach(var key in history.Where(p=>now-p.Value.Seen>TimeSpan.FromMinutes(10)).Select(p=>p.Key).ToList())history.Remove(key);
             foreach(var node in snapshot.Nodes.Where(n=>DesktopParser.IsHistoryNode(n,snapshot)))
@@ -81,14 +83,14 @@ namespace ServerLink
             var editor=snapshot.Nodes.Single(DesktopParser.IsComposer);var value=(ValuePattern)reader.Elements[editor.Id].GetCurrentPattern(ValuePattern.Pattern);if(value.Current.Value!=expectedText)throw new InvalidOperationException("服务器草稿已变化，没有清除内容。请刷新核对。");
             // Recovery moves only the currently visible draft; it never infers an earlier Invoke outcome.
             Secrets.Save(Path.Combine(Path.GetDirectoryName(journalPath),"recovered-draft.dat"),new RecoveredServerDraft {SessionId=expectedSession,Text=expectedText,SavedUtc=DateTime.UtcNow.ToString("o")});
-            value.SetValue("");Thread.Sleep(100);var updated=Read();if(updated.SessionId!=expectedSession||!String.IsNullOrWhiteSpace(updated.DraftText))throw new InvalidOperationException("草稿已备份，但未确认服务器输入框已清空，请刷新核对。");return updated;
+            MarkInvoke();value.SetValue("");Thread.Sleep(100);var updated=Read();if(updated.SessionId!=expectedSession||!String.IsNullOrWhiteSpace(updated.DraftText))throw new InvalidOperationException("草稿已备份，但未确认服务器输入框已清空，请刷新核对。");return updated;
         }
         public ChatState Open(string handle)
         {
             Read();var target=history.Values.FirstOrDefault(h=>h.Handle==handle);if(target==null||target.Element.Current.Name!=target.Name)throw new InvalidOperationException("历史入口已变化，请刷新后重试。");
             if(state.Generating)throw new InvalidOperationException("原会话正在生成回复，请先等待完成。");
             var editor=snapshot.Nodes.FirstOrDefault(DesktopParser.IsComposer);if(editor!=null&&!String.IsNullOrWhiteSpace(editor.Value))throw new InvalidOperationException("原应用存在未发送草稿，请先处理草稿。");
-            ((InvokePattern)target.Element.GetCurrentPattern(InvokePattern.Pattern)).Invoke();Thread.Sleep(650);return Read();
+            MarkInvoke();((InvokePattern)target.Element.GetCurrentPattern(InvokePattern.Pattern)).Invoke();Thread.Sleep(650);return Read();
         }
         public ChatState Send(string requestId,string expectedSession,string text)
         {
@@ -106,7 +108,7 @@ namespace ServerLink
             List<DesktopNode> button=null;var ready=DateTime.UtcNow.AddSeconds(4);
             do{Thread.Sleep(120);Read();if(state.SessionId!=expectedSession)throw new InvalidOperationException("填入草稿后原会话发生变化，未提交。");var current=snapshot.Nodes.Where(DesktopParser.IsComposer).ToList();if(current.Count!=1||!DraftMatches(current[0].Value,text))throw new InvalidOperationException("服务器草稿已变化，未提交。请核对原应用。");button=snapshot.Nodes.Where(n=>n.Type=="ControlType.Button"&&!n.Disabled&&n.CanInvoke&&DesktopParser.IsSend(n.Name)).ToList();if(button.Count==1)break;}while(DateTime.UtcNow<ready);
             if(button.Count!=1)throw new InvalidOperationException("已填入原应用草稿，但未找到唯一发送按钮；尚未提交。请在原应用核对。");
-            record.Stage="submitting";SaveJournal();var invoke=(InvokePattern)reader.Elements[button[0].Id].GetCurrentPattern(InvokePattern.Pattern);invocationAttempted=true;invoke.Invoke();record.Stage="submitted";SaveJournal();Thread.Sleep(120);return Read();
+            record.Stage="submitting";SaveJournal();var invoke=(InvokePattern)reader.Elements[button[0].Id].GetCurrentPattern(InvokePattern.Pattern);PreparePromotion();MarkInvoke();invocationAttempted=true;invoke.Invoke();record.Stage="submitted";SaveJournal();Thread.Sleep(120);return Read();
             }
             catch(Exception ex)
             {
@@ -118,8 +120,8 @@ namespace ServerLink
         public static bool DraftMatches(string actual,string expected){string a=(actual??"").Replace("\r\n","\n"),b=(expected??"").Replace("\r\n","\n");return a==b||a==b+"\n";}
         public ChatState Stop(string expectedSession)
         {
-            Read();if(state.SessionId!=expectedSession)throw new InvalidOperationException("当前会话已变化。");var button=snapshot.Nodes.Where(n=>n.Type=="ControlType.Button"&&n.CanInvoke&&DesktopParser.IsStop(n.Name)).ToList();if(button.Count!=1)throw new InvalidOperationException("没有可安全停止的当前回复。");((InvokePattern)reader.Elements[button[0].Id].GetCurrentPattern(InvokePattern.Pattern)).Invoke();Thread.Sleep(250);return Read();
+            Read();if(state.SessionId!=expectedSession)throw new InvalidOperationException("当前会话已变化。");var button=snapshot.Nodes.Where(n=>n.Type=="ControlType.Button"&&n.CanInvoke&&DesktopParser.IsStop(n.Name)).ToList();if(button.Count!=1)throw new InvalidOperationException("没有可安全停止的当前回复。");MarkInvoke();((InvokePattern)reader.Elements[button[0].Id].GetCurrentPattern(InvokePattern.Pattern)).Invoke();Thread.Sleep(250);return Read();
         }
-        void SaveJournal(){if(sends.Count>2000)throw new InvalidOperationException("操作记录已达到上限，请维护记录后继续。");Secrets.Save(journalPath,sends);}
+        void SaveJournal(){if(sends.Count>1500){var compact=sends.Take(sends.Count-1000).Where(r=>r.Stage=="submitted").ToList();foreach(var record in compact)sends.Remove(record);}if(sends.Count>2000)throw new InvalidOperationException("未完成操作记录过多，请先核对维护。");Secrets.Save(journalPath,sends);}
     }
 }

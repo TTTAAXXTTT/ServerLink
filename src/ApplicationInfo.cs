@@ -3,14 +3,14 @@ using System.Drawing;
 using System.Reflection;
 using System.Windows.Forms;
 
-[assembly: AssemblyVersion("0.2.8.0")]
-[assembly: AssemblyFileVersion("0.2.8.0")]
+[assembly: AssemblyVersion("0.2.9.0")]
+[assembly: AssemblyFileVersion("0.2.9.0")]
 
 namespace ServerLink
 {
     public static class ApplicationInfo
     {
-        public const string Version="0.2.8";
+        public const string Version="0.2.9";
         public const string Author="作者QQ：230154231";
     }
 

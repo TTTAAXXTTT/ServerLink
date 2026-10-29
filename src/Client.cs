@@ -29,12 +29,13 @@ namespace ServerLink
     }
     public sealed class PendingClientMessage
     {
-        public string SessionId;public string Text;public string OriginalDraftText;public int AfterIndex;public DateTime StartedUtc;
+        public string SessionId;public string Text;public string OriginalDraftText;public int AfterIndex;public DateTime StartedUtc;public string Id;public string ContextId;
     }
     public sealed class LocalClientDraft
     {
         public string Text {get;set;} public string SessionId {get;set;} public string ServerKey {get;set;}
         public PendingClientMessage Pending {get;set;} public bool Uncertain {get;set;}
+        public int FormatVersion {get;set;} public List<SavedClientDraft> Drafts {get;set;} public PendingClientAction Action {get;set;}
     }
     sealed class PendingDraftRecovery {public string SessionId,Text;public bool Prepared;public DateTime StartedUtc;}
     public sealed partial class ClientForm : Form
@@ -68,9 +69,9 @@ namespace ServerLink
             persistDraft=loadSavedPair;
             Text="ServerLink · 服务器 Claude 工作台";ClientSize=new Size(1180,790);MinimumSize=new Size(980,690);StartPosition=FormStartPosition.CenterScreen;Font=new Font("Microsoft YaHei UI",10);BackColor=Color.FromArgb(246,248,250);
             var root=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute,265));root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
-            var side=new TableLayoutPanel {Dock=DockStyle.Fill,BackColor=ink,Padding=new Padding(20),RowCount=5,ColumnCount=1,Margin=Padding.Empty};side.RowStyles.Add(new RowStyle(SizeType.Absolute,74));side.RowStyles.Add(new RowStyle(SizeType.Absolute,54));side.RowStyles.Add(new RowStyle(SizeType.Absolute,38));side.RowStyles.Add(new RowStyle(SizeType.Percent,100));side.RowStyles.Add(new RowStyle(SizeType.Absolute,75));
+            var side=new TableLayoutPanel {Dock=DockStyle.Fill,BackColor=ink,Padding=new Padding(20),RowCount=5,ColumnCount=1,Margin=Padding.Empty};side.RowStyles.Add(new RowStyle(SizeType.Absolute,74));side.RowStyles.Add(new RowStyle(SizeType.Absolute,98));side.RowStyles.Add(new RowStyle(SizeType.Absolute,38));side.RowStyles.Add(new RowStyle(SizeType.Percent,100));side.RowStyles.Add(new RowStyle(SizeType.Absolute,75));
             side.Controls.Add(new Label {Text="ServerLink\r\n服务器会话 · 本地操作",Dock=DockStyle.Fill,ForeColor=Color.White,Font=new Font("Microsoft YaHei UI",12,FontStyle.Bold)},0,0);connect.Dock=DockStyle.Fill;Style(connect,true);side.Controls.Add(connect,0,1);side.Controls.Add(new Label {Text="服务器最近会话",ForeColor=Color.FromArgb(180,199,207),Dock=DockStyle.Fill,TextAlign=ContentAlignment.BottomLeft},0,2);side.Controls.Add(history,0,3);
-            var footer=new Label {Text=ApplicationInfo.Version+" · 单行空行修复\r\n项目与 Code 任务接入尚未启用",ForeColor=Color.FromArgb(180,199,207),Dock=DockStyle.Fill,TextAlign=ContentAlignment.BottomLeft};side.Controls.Add(footer,0,4);root.Controls.Add(side,0,0);
+            var footer=new Label {Text=ApplicationInfo.Version+" · 普通聊天\r\n项目与 Code 任务接入尚未启用",ForeColor=Color.FromArgb(180,199,207),Dock=DockStyle.Fill,TextAlign=ContentAlignment.BottomLeft};side.Controls.Add(footer,0,4);root.Controls.Add(side,0,0);
             var main=new TableLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(28,18,28,16),ColumnCount=1,RowCount=7,Margin=Padding.Empty};main.RowStyles.Add(new RowStyle(SizeType.Absolute,55));main.RowStyles.Add(new RowStyle(SizeType.Absolute,42));main.RowStyles.Add(new RowStyle(SizeType.Percent,100));main.RowStyles.Add(new RowStyle(SizeType.Absolute,30));main.RowStyles.Add(new RowStyle(SizeType.Absolute,100));main.RowStyles.Add(new RowStyle(SizeType.Absolute,50));main.RowStyles.Add(new RowStyle(SizeType.Absolute,32));main.Controls.Add(title,0,0);main.Controls.Add(detail,0,1);
             var body=new Panel {Dock=DockStyle.Fill,BackColor=Color.White,Padding=new Padding(20)};body.Controls.Add(conversation);main.Controls.Add(body,0,2);main.Controls.Add(new Label {Text="Enter 换行，Ctrl+Enter 发送。单行文字末尾的空白行会自动忽略。",ForeColor=muted,Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft},0,3);main.Controls.Add(composer,0,4);
             var actions=new FlowLayoutPanel {Dock=DockStyle.Fill,Padding=new Padding(0,8,0,0)};Style(send,true);Style(stop,false);Style(refresh,false);Style(recover,false);var clear=new Button {Text="清空本地草稿",AutoSize=true};Style(clear,false);actions.Controls.Add(send);actions.Controls.Add(stop);actions.Controls.Add(refresh);actions.Controls.Add(clear);actions.Controls.Add(recover);main.Controls.Add(actions,0,5);main.Controls.Add(status,0,6);root.Controls.Add(main,1,0);Controls.Add(root);
@@ -80,16 +81,17 @@ namespace ServerLink
             recover.Click+=async(s,e)=>await RecoverServerDraft();
             composer.KeyDown+=async(s,e)=>{if(e.Control&&e.KeyCode==Keys.Enter){e.SuppressKeyPress=true;await Send();}};
             composer.TextChanged+=(s,e)=>{if(String.IsNullOrWhiteSpace(composer.Text))draftSession="";else if(String.IsNullOrEmpty(draftSession)&&state!=null)draftSession=state.SessionId;UpdateControls();if(persistDraft){draftSave.Stop();draftSave.Start();}};
-            clear.Click+=(s,e)=>{composer.Clear();uncertain=false;pendingMessage=null;actionError="";UpdateControls();};
+            clear.Click+=(s,e)=>{composer.Clear();if(pendingMessage==null&&pendingAction==null){uncertain=false;actionError="";}UpdateControls();};
             status.TextChanged+=(s,e)=>statusTip.SetToolTip(status,status.Text);status.Click+=(s,e)=>{if(!String.IsNullOrEmpty(status.Text))MessageBox.Show(this,status.Text,"当前状态");};
             draftSave.Tick+=(s,e)=>{draftSave.Stop();SaveLocalDraft();};
             FormClosed+=(s,e)=>{closing=true;SaveLocalDraft();draftSave.Stop();draftSave.Dispose();poll.Stop();poll.Dispose();statusTip.Dispose();if(connection!=null)connection.Dispose();};
             if(loadSavedPair&&File.Exists(profilePath))try{pair=Secrets.Load<Pairing>(profilePath);}catch{status.Text="保存的配对信息无法读取，请重新配对。";}
-            if(persistDraft&&pair!=null&&File.Exists(DraftPath))try{var saved=Secrets.Load<LocalClientDraft>(DraftPath);if(saved.ServerKey==ServerKey(pair)){composer.Text=saved.Text??"";draftSession=saved.SessionId??"";pendingMessage=saved.Pending;uncertain=saved.Uncertain||pendingMessage!=null;status.Text=pendingMessage!=null?"已恢复待核对的消息，请连接原服务器确认送达；不会自动重发。":String.IsNullOrEmpty(composer.Text)?"已载入服务器配对信息。":"已恢复本地未发送草稿，请连接并核对原会话。";}}catch{status.Text="本地草稿无法读取，未自动覆盖。";}
+            if(persistDraft&&pair!=null&&File.Exists(DraftPath))try{var saved=Secrets.Load<LocalClientDraft>(DraftPath);if(saved.ServerKey==ServerKey(pair)){if(saved.FormatVersion>2)throw new InvalidOperationException("Unsupported draft format.");if(saved.FormatVersion<2&&!File.Exists(DraftPath+".v1.bak"))File.Copy(DraftPath,DraftPath+".v1.bak");composer.Text=saved.Text??"";draftSession=saved.SessionId??"";activeDraftSession=draftSession;pendingMessage=saved.Pending;pendingAction=saved.Action;if(saved.Drafts!=null)drafts.AddRange(saved.Drafts);uncertain=saved.Uncertain||pendingMessage!=null||pendingAction!=null;status.Text=pendingMessage!=null?"已恢复待核对的消息，请连接原服务器确认送达；不会自动重发。":String.IsNullOrEmpty(composer.Text)?"已载入服务器配对信息。":"已恢复本地未发送草稿，请连接并核对原会话。";}}catch{draftStorageBlocked=true;status.Text="本地草稿无法读取，已暂停覆盖保存，请备份数据后检查。";}
+            InitializeNavigation(side);
         }
         string DraftPath {get{return Path.Combine(Path.GetDirectoryName(profilePath),"local-draft.dat");}}
         static string ServerKey(Pairing value){return value.Host.ToLowerInvariant()+":"+value.Port+"/"+value.Pin;}
-        void SaveLocalDraft(){if(!persistDraft||pair==null)return;try{Secrets.Save(DraftPath,new LocalClientDraft {Text=composer.Text,SessionId=draftSession,ServerKey=ServerKey(pair),Pending=pendingMessage,Uncertain=uncertain});}catch{if(!closing)status.Text="本地草稿保存失败，请复制文字后再退出。";}}
+        bool SaveLocalDraft(){if(!persistDraft||pair==null)return true;if(draftStorageBlocked)return false;try{CaptureDraft();Secrets.Save(DraftPath,new LocalClientDraft {FormatVersion=2,Text=composer.Text,SessionId=draftSession,ServerKey=ServerKey(pair),Pending=pendingMessage,Uncertain=uncertain,Drafts=drafts,Action=pendingAction});return true;}catch{if(!closing)status.Text="本地草稿保存失败，请复制文字后检查。";return false;}}
         void Style(Button button,bool primary){button.FlatStyle=FlatStyle.Flat;button.FlatAppearance.BorderSize=primary?0:1;button.BackColor=primary?teal:Color.White;button.ForeColor=primary?Color.White:ink;button.Height=34;button.Margin=new Padding(0,0,10,0);}
         void DrawHistory(object sender,DrawItemEventArgs e)
         {
@@ -101,7 +103,7 @@ namespace ServerLink
             working=true;poll.Stop();UpdateControls();status.Text="正在连接并验证服务器证书…";await commandGate.WaitAsync();
             try
             {
-                if(closing)return;if(connection!=null)connection.Dispose();connection=new BridgeConnection();var current=connection;
+                if(closing)return;if(connection!=null)connection.Dispose();connection=new BridgeConnection(controllerId);var current=connection;
                 await Task.Run(()=>current.Connect(pair));if(closing)return;Secrets.Save(profilePath,pair);actionError="";status.Text=pendingMessage==null?"已连接 "+pair.Host+":"+pair.Port:"连接已恢复，正在核对上一条消息是否送达…";connect.Text="切换 / 重连";historyKey="";renderKey="";
             }
             catch(Exception ex){if(connection!=null)connection.Dispose();connection=null;status.Text="连接失败："+ex.GetBaseException().Message;}
@@ -115,14 +117,14 @@ namespace ServerLink
             try
             {
                 var request=new WireRequest {Id=Guid.NewGuid().ToString("N"),Op="status"};var reply=await Task.Run(()=>current.Call(request));
-                if(closing||connection!=current)return;if(!reply.Ok){if(String.IsNullOrEmpty(actionError))status.Text="同步失败："+reply.Error;return;}if(reply.State!=null)Render(reply.State);
+                if(closing||connection!=current)return;if(!reply.Ok){if(String.IsNullOrEmpty(actionError))status.Text="同步失败："+reply.Error;return;}if(reply.State!=null)Render(reply.State);await QueryMissingOperation(current);
             }
             catch(Exception ex){if(!closing&&connection==current){poll.Stop();connection.Dispose();connection=null;status.Text="连接已中断："+ex.GetBaseException().Message;}}
             finally{refreshing=false;commandGate.Release();if(!closing)UpdateControls();}
         }
         async Task Send()
         {
-            if(working||connection==null||uncertain||recoveringDraft!=null||!interfaceReady||state==null||!state.CanSend||String.IsNullOrWhiteSpace(composer.Text))return;
+            if(working||connection==null||uncertain||pendingAction!=null||recoveringDraft!=null||!interfaceReady||state==null||!state.CanSend||String.IsNullOrWhiteSpace(composer.Text))return;
             if(composer.Text.Length>32000){status.Text="消息过长，请限制在 32000 字符以内。";return;}
             if(!String.IsNullOrEmpty(draftSession)&&draftSession!=state.SessionId){actionError="服务器当前会话已变化，请核对草稿后重新输入；消息尚未发送。";status.Text=actionError;return;}
             string original=composer.Text;await Command("send",PrepareSubmission(original),null,original);
@@ -148,8 +150,8 @@ namespace ServerLink
         async Task Command(string operation,string text,string handle,string originalDraft=null)
         {
             if(working||connection==null||closing)return;
-            if(operation=="open"&&(pendingMessage!=null||recoveringDraft!=null||uncertain)){status.Text="上一条操作仍在核对，暂不切换会话。请先确认结果。";return;}
-            var current=connection;var request=new WireRequest {Id=Guid.NewGuid().ToString("N"),Op=operation,SessionId=state==null?"":state.SessionId,Text=text,Handle=handle};
+            if((operation=="open"||operation=="create-chat")&&(pendingMessage!=null||pendingAction!=null||recoveringDraft!=null||uncertain)){status.Text="上一条操作仍在核对，暂不切换会话。请先确认结果。";return;}
+            if(!SaveLocalDraft())return;var current=connection;var request=new WireRequest {Id=Guid.NewGuid().ToString("N"),Op=operation,SessionId=state==null?"":state.SessionId,Text=text,Handle=handle,ContextId=state==null?null:state.ContextId,AgentEpoch=state==null?null:state.AgentEpoch};
             int previousIndex=state==null?0:Math.Max(state.TotalMessages,state.Messages.Count==0?0:state.Messages.Max(m=>m.Index));
             working=true;sending=operation=="send";actionError="";UpdateControls();if(sending)status.Text=refreshing?"等待当前同步完成后发送…":"正在发送…";
             await commandGate.WaitAsync();
@@ -159,18 +161,21 @@ namespace ServerLink
                 if(operation=="send")
                 {
                     if(state!=null&&state.SessionId==request.SessionId)previousIndex=Math.Max(previousIndex,Math.Max(state.TotalMessages,state.Messages.Count==0?0:state.Messages.Max(m=>m.Index)));
-                    pendingMessage=new PendingClientMessage {SessionId=request.SessionId,Text=text,OriginalDraftText=originalDraft??text,AfterIndex=previousIndex,StartedUtc=DateTime.UtcNow};
+                    pendingMessage=new PendingClientMessage {Id=request.Id,ContextId=request.ContextId,SessionId=request.SessionId,Text=text,OriginalDraftText=originalDraft??text,AfterIndex=previousIndex,StartedUtc=DateTime.UtcNow};
                     uncertain=true;
-                    SaveLocalDraft();
+                    if(!SaveLocalDraft()){pendingMessage=null;uncertain=false;return;}
                 }
+                if(operation=="open"||operation=="create-chat"){pendingAction=new PendingClientAction {Id=request.Id,Kind=operation,SourceSession=request.SessionId,StartedUtc=DateTime.UtcNow};if(!SaveLocalDraft()){pendingAction=null;return;}}
                 var reply=await Task.Run(()=>current.Call(request));if(closing)return;
                 if(!reply.Ok)
                 {
+                    if(pendingAction!=null&&pendingAction.Id==request.Id){if(reply.Operation!=null&&reply.Operation.Phase=="not_submitted"||IsDefiniteRejection(reply.ErrorCode)){pendingAction=null;uncertain=false;}else uncertain=true;}
                     if(operation=="recover-draft"&&reply.Error=="草稿已备份，但未确认服务器输入框已清空，请刷新核对。"){status.Text="草稿已备份，正在等待服务器输入框更新…";return;}
                     if(operation=="recover-draft")recoveringDraft=null;
                     actionError=reply.Error;status.Text=actionError;
-                    if(operation=="send"){uncertain=reply.ErrorCode!="not_submitted"&&!IsConfirmedRejection(reply.Error);if(!uncertain)pendingMessage=null;}return;
+                    if(operation=="send"){uncertain=!IsDefiniteRejection(reply.ErrorCode)&&!IsConfirmedRejection(reply.Error);if(!uncertain)pendingMessage=null;}return;
                 }
+                if(pendingAction!=null&&pendingAction.Id==request.Id&&(reply.Operation==null||reply.Operation.Phase=="confirmed")){pendingAction=null;uncertain=false;navigationConfirmed=true;}
                 if(operation=="send")uncertain=true;if(reply.State!=null)Render(reply.State);
                 if(operation=="recover-draft"&&recoveringDraft!=null)status.Text="草稿已备份，正在等待服务器输入框更新…";
                 if(operation=="send")status.Text=pendingMessage==null?"已确认消息进入服务器原会话。":"已提交发送操作，正在核对服务器消息；程序不会重复发送。";
@@ -179,7 +184,7 @@ namespace ServerLink
             finally{commandGate.Release();working=false;sending=false;if(!closing){SaveLocalDraft();UpdateControls();}}
         }
         static void Enable(Control control,bool enabled){if(control.Enabled!=enabled)control.Enabled=enabled;}
-        void UpdateControls(){bool active=connection!=null;Enable(send,active&&!working&&!uncertain&&recoveringDraft==null&&interfaceReady&&state!=null&&state.CanSend&&!String.IsNullOrWhiteSpace(composer.Text));send.Text=sending?"发送中…":pendingMessage!=null?"核对中…":"发送";Enable(composer,active);Enable(stop,active&&!working&&state!=null&&state.Generating);Enable(refresh,active&&!working);Enable(recover,active&&!working&&recoveringDraft==null&&state!=null&&state.DraftRecoveryAvailable);Enable(history,active&&!working&&pendingMessage==null&&recoveringDraft==null&&!uncertain);Enable(connect,!working);poll.Interval=pendingMessage!=null||recoveringDraft!=null||state!=null&&state.Generating?700:2500;}
+        void UpdateControls(){bool active=connection!=null;UpdateNavigationControls();Enable(send,active&&!working&&!uncertain&&pendingAction==null&&recoveringDraft==null&&interfaceReady&&state!=null&&state.CanSend&&!String.IsNullOrWhiteSpace(composer.Text));send.Text=sending?"发送中…":pendingMessage!=null?"核对中…":"发送";Enable(composer,active&&!draftStorageBlocked);Enable(stop,active&&!working&&pendingMessage==null&&pendingAction==null&&state!=null&&state.Generating);Enable(refresh,active&&!working);Enable(recover,active&&!working&&pendingAction==null&&recoveringDraft==null&&state!=null&&state.DraftRecoveryAvailable);Enable(history,active&&!working&&pendingAction==null&&pendingMessage==null&&recoveringDraft==null&&!uncertain);Enable(connect,!working);poll.Interval=(pendingMessage!=null&&DateTime.UtcNow-pendingMessage.StartedUtc>TimeSpan.FromSeconds(45))||(pendingAction!=null&&DateTime.UtcNow-pendingAction.StartedUtc>TimeSpan.FromSeconds(30))?10000:pendingMessage!=null||pendingAction!=null||recoveringDraft!=null||state!=null&&state.Generating?1000:3000;}
         static bool IsConfirmedRejection(string error)
         {
             // These messages are emitted by the existing 0.2.0 server before InvokePattern.Invoke.
@@ -188,73 +193,7 @@ namespace ServerLink
             return rejected.Contains(error??"");
         }
         static string NormalizeMessage(string text){return (text??"").Replace("\r\n","\n").TrimEnd('\n');}
-        internal static bool MatchesDisplayedMessage(string displayed,string submitted)
-        {
-            // Claude's rendered paragraphs collapse repeated/edge blank lines.
-            // Only compare a newly indexed user message; do not change submitted
-            // text or use this comparison when deciding to clear an edited draft.
-            if(NormalizeDisplayedMessage(displayed)==NormalizeDisplayedMessage(submitted))return true;
-            return MatchesRenderedCode(displayed,submitted);
-        }
-        static bool MatchesRenderedCode(string displayed,string submitted)
-        {
-            var parts=new List<string>();var outside=new List<string>();var code=new List<string>();char fence='\0';int fenceLength=0;bool found=false;
-            foreach(string line in (submitted??"").Replace("\r\n","\n").Split('\n'))
-            {
-                var marker=System.Text.RegularExpressions.Regex.Match(line,@"^[ ]{0,3}(`{3,}|~{3,})(.*)$");
-                if(fence!='\0')
-                {
-                    if(marker.Success&&marker.Groups[1].Value[0]==fence&&marker.Groups[1].Value.Length>=fenceLength&&String.IsNullOrWhiteSpace(marker.Groups[2].Value))
-                    {
-                        // The accessible body omits the fence/language, but its
-                        // code text, indentation and internal blank lines must match.
-                        parts.Add(System.Text.RegularExpressions.Regex.Escape(String.Join("\n",code)));code.Clear();fence='\0';found=true;
-                    }
-                    else code.Add(line);
-                    continue;
-                }
-                if(marker.Success)
-                {
-                    string text=NormalizeDisplayedMessage(String.Join("\n",outside));if(text.Length>0)parts.Add(ParagraphPattern(text));outside.Clear();fence=marker.Groups[1].Value[0];fenceLength=marker.Groups[1].Value.Length;
-                }
-                else outside.Add(line);
-            }
-            if(!found||fence!='\0')return false;
-            string tail=NormalizeDisplayedMessage(String.Join("\n",outside));if(tail.Length>0)parts.Add(ParagraphPattern(tail));
-            string pattern=@"\A\n*"+String.Join(@"\n{1,2}",parts)+@"\n*\z";
-            try{return System.Text.RegularExpressions.Regex.IsMatch((displayed??"").Replace("\r\n","\n"),pattern,System.Text.RegularExpressions.RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(100));}
-            catch(System.Text.RegularExpressions.RegexMatchTimeoutException){return false;}
-        }
-        static string ParagraphPattern(string text)
-        {
-            var result=new StringBuilder();string[] lines=text.Split('\n');
-            for(int i=0;i<lines.Length;i++)
-            {
-                if(i>0)result.Append("\\n");
-                if(lines[i]==""){result.Append(@"(?:[ \t]*\n)+");i++;if(i==lines.Length)break;}
-                result.Append(System.Text.RegularExpressions.Regex.Escape(lines[i]));
-            }
-            return result.ToString();
-        }
-        static string NormalizeDisplayedMessage(string text)
-        {
-            var lines=new List<string>();char fence='\0';int fenceLength=0;
-            foreach(string line in (text??"").Replace("\r\n","\n").Split('\n'))
-            {
-                var marker=System.Text.RegularExpressions.Regex.Match(line,@"^[ ]{0,3}(`{3,}|~{3,})(.*)$");
-                if(fence!='\0')
-                {
-                    lines.Add(line);
-                    if(marker.Success&&marker.Groups[1].Value[0]==fence&&marker.Groups[1].Value.Length>=fenceLength&&String.IsNullOrWhiteSpace(marker.Groups[2].Value))fence='\0';
-                    continue;
-                }
-                if(marker.Success){fence=marker.Groups[1].Value[0];fenceLength=marker.Groups[1].Value.Length;lines.Add(line);continue;}
-                if(String.IsNullOrWhiteSpace(line)){if(lines.Count>0&&lines[lines.Count-1]!="")lines.Add("");}
-                else lines.Add(line);
-            }
-            if(fence=='\0'&&lines.Count>0&&lines[lines.Count-1]=="")lines.RemoveAt(lines.Count-1);
-            return String.Join("\n",lines);
-        }
+        internal static bool MatchesDisplayedMessage(string displayed,string submitted){return MessageProof.Matches(displayed,submitted);}
         bool ConfirmPending(ChatState value)
         {
             if(pendingMessage==null||value.SessionId!=pendingMessage.SessionId)return false;
@@ -277,7 +216,7 @@ namespace ServerLink
                 {
                     int start=common==0?0:renderedEnds[common-1];conversation.Select(start,conversation.TextLength-start);conversation.SelectedText="";
                     if(renderedEnds.Count>common)renderedEnds.RemoveRange(common,renderedEnds.Count-common);
-                    if(value.Messages.Count==0)conversation.AppendText(String.IsNullOrWhiteSpace(value.Error)?"当前没有可读取的聊天消息。":value.Error);
+                    if(value.Messages.Count==0)conversation.AppendText(String.IsNullOrWhiteSpace(value.Error)?"输入第一条消息开始聊天。":value.Error);
                     using(var bold=new Font(Font.FontFamily,10,FontStyle.Bold))using(var normal=new Font(Font.FontFamily,11))for(int i=common;i<value.Messages.Count;i++){var message=value.Messages[i];conversation.SelectionColor=message.Role=="user"?teal:ink;conversation.SelectionFont=bold;conversation.AppendText(message.Role=="user"?"你\n":message.Role=="assistant"?"Claude\n":"消息\n");conversation.SelectionColor=ink;conversation.SelectionFont=normal;conversation.AppendText(message.Text+"\n\n");renderedEnds.Add(conversation.TextLength);}
                 }
                 renderedSession=value.SessionId;renderedMessages.Clear();renderedMessages.AddRange(value.Messages.Select(m=>new ChatMessage {Index=m.Index,Role=m.Role,Text=m.Text}));
@@ -288,7 +227,7 @@ namespace ServerLink
         }
         void Render(ChatState value)
         {
-            bool confirmed=ConfirmPending(value);
+            ReconcileNavigation(value);bool confirmed=ConfirmPending(value);
             bool recovered=recoveringDraft!=null&&value.SessionId==recoveringDraft.SessionId&&String.IsNullOrEmpty(value.Error)&&value.DraftText!=null&&String.IsNullOrWhiteSpace(value.DraftText);
             if(recovered){if(recoveringDraft.Prepared||pendingMessage==null){pendingMessage=null;uncertain=false;}recoveringDraft=null;actionError="";SaveLocalDraft();}
             else if(recoveringDraft!=null&&DateTime.UtcNow-recoveringDraft.StartedUtc>TimeSpan.FromSeconds(15)){recoveringDraft=null;actionError="取回操作尚未确认，本地文字已保留。请刷新核对服务器草稿后再处理。";}
@@ -302,7 +241,7 @@ namespace ServerLink
             incompleteReads=0;interfaceReady=true;
             state=value;title.Text=String.IsNullOrWhiteSpace(value.Title)?"服务器 Claude":value.Title;detail.Text="原会话 · Claude "+value.Version+(value.Generating?" · 正在回复":"")+(value.TotalMessages>value.Messages.Count?" · 已读取 "+value.Messages.Count+" / "+value.TotalMessages+" 条消息":"");
             if(value.Runtime!=null)detail.Text+=(value.Runtime.Adapter=="content"?" · 应用内容接入":" · 桌面接入")+(value.Runtime.ActiveRdpSessions==0?" · 服务器无活动 RDP 会话":value.Runtime.ActiveRdpSessions>0?" · 服务器仍有 RDP 连接":" · 服务器连接状态未知");
-            string messagesKey=Json.Write(value.Messages);if(messagesKey!=renderKey)
+            string messagesKey=value.SessionId+"\n"+Json.Write(value.Messages);if(messagesKey!=renderKey)
             {
                 renderKey=messagesKey;RenderConversation(value);
             }
@@ -318,6 +257,6 @@ namespace ServerLink
     }
     static class ClientProgram
     {
-        [STAThread]static int Main(){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);using(var form=new ClientForm()){AuthorNotice.Attach(form);Application.Run(form);}return 0;}
+        [STAThread]static int Main(){Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);bool owned;using(var single=new Mutex(true,@"Local\ServerLink.Client."+System.Security.Principal.WindowsIdentity.GetCurrent().User.Value,out owned)){if(!owned){MessageBox.Show("本地客户端已打开，请使用已有窗口。","ServerLink");return 0;}try{using(var form=new ClientForm()){AuthorNotice.Attach(form);Application.Run(form);}}finally{single.ReleaseMutex();}}return 0;}
     }
 }

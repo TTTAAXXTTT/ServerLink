@@ -18,6 +18,10 @@ namespace ServerLink
     {
         public string Version {get;set;}
         public string SessionId {get;set;}
+        public string ContextId {get;set;}
+        public string PageKind {get;set;}
+        public string AgentEpoch {get;set;}
+        public List<OperationReceipt> Operations {get;set;}
         public string Title {get;set;}
         public string CapturedUtc {get;set;}
         public string Error {get;set;}
@@ -31,16 +35,26 @@ namespace ServerLink
         public List<ChatHistory> History {get;set;}
         public List<string> Capabilities {get;set;}
         public ServerRuntime Runtime {get;set;}
-        public ChatState(){Messages=new List<ChatMessage>();History=new List<ChatHistory>();Capabilities=new List<string>();Error="";Title="";SessionId="";}
+        public ChatState(){Messages=new List<ChatMessage>();History=new List<ChatHistory>();Capabilities=new List<string>();Operations=new List<OperationReceipt>();Error="";Title="";SessionId="";}
     }
     public sealed class ServerRuntime
     {
         public int SessionId {get;set;} public string SessionState {get;set;} public int ActiveRdpSessions {get;set;}
         public string InputDesktop {get;set;} public string Adapter {get;set;} public string Error {get;set;}
-        public string BridgeVersion {get;set;} public long OperationMilliseconds {get;set;} public long QueueMilliseconds {get;set;}
+        public string BridgeVersion {get;set;} public string BridgeBuild {get;set;} public long OperationMilliseconds {get;set;} public long QueueMilliseconds {get;set;}
     }
-    public sealed class WireRequest { public string Id {get;set;} public string Op {get;set;} public string Token {get;set;} public string SessionId {get;set;} public string Text {get;set;} public string Handle {get;set;} }
-    public sealed class WireReply { public string Id {get;set;} public bool Ok {get;set;} public string Error {get;set;} public string ErrorCode {get;set;} public ChatState State {get;set;} }
+    public sealed class WireRequest { public string Id {get;set;} public string Op {get;set;} public string Token {get;set;} public string SessionId {get;set;} public string Text {get;set;} public string Handle {get;set;} public string ContextId {get;set;} public string AgentEpoch {get;set;} public string ClientId {get;set;} [ScriptIgnore] public string Owner {get;set;} }
+    public sealed class WireReply { public string Id {get;set;} public bool Ok {get;set;} public string Error {get;set;} public string ErrorCode {get;set;} public ChatState State {get;set;} public OperationReceipt Operation {get;set;} }
+    public sealed class OperationReceipt
+    {
+        public string Id {get;set;} public string Kind {get;set;} public string Phase {get;set;} public string ContextId {get;set;} public string SessionId {get;set;} public string ErrorCode {get;set;} public string Error {get;set;}
+        public bool Terminal {get{return Phase=="confirmed"||Phase=="not_submitted";}}
+    }
+    public sealed class BridgeFault : InvalidOperationException
+    {
+        public string Code {get;private set;} public bool NotSubmitted {get;private set;}
+        public BridgeFault(string code,string text,bool notSubmitted=true):base(text){Code=code;NotSubmitted=notSubmitted;}
+    }
     public sealed class RequestNotSubmittedException : InvalidOperationException
     {
         public RequestNotSubmittedException(string message,Exception inner):base(message,inner){}
@@ -102,6 +116,9 @@ namespace ServerLink
     }
     public sealed class BridgeConnection : IBridgeConnection
     {
+        readonly string clientId;
+        public BridgeConnection():this(Guid.NewGuid().ToString("N")){}
+        public BridgeConnection(string clientId){this.clientId=clientId;}
         readonly object gate=new object();TcpClient tcp;SslStream stream;
         public void Connect(Pairing pair)
         {
@@ -111,7 +128,7 @@ namespace ServerLink
                 {
                     var task=tcp.ConnectAsync(pair.Host,pair.Port);if(!task.Wait(6000))throw new TimeoutException("无法连接服务器桥接端口，请检查云防火墙、Windows 防火墙和桥接程序。");
                     tcp.ReceiveTimeout=30000;tcp.SendTimeout=10000;stream=new SslStream(tcp.GetStream(),false,(sender,cert,chain,errors)=>VerifyCertificate(cert,pair.Pin));
-                    stream.AuthenticateAsClient(pair.Host,null,SslProtocols.Tls12,false);Frame.Write(stream,new WireRequest {Id="hello",Op="hello",Token=pair.Token});var reply=Frame.Read<WireReply>(stream);if(reply==null||!reply.Ok||reply.Id!="hello")throw new AuthenticationException("服务器拒绝配对认证。");
+                    stream.AuthenticateAsClient(pair.Host,null,SslProtocols.Tls12,false);Frame.Write(stream,new WireRequest {Id="hello",Op="hello",Token=pair.Token,ClientId=clientId});var reply=Frame.Read<WireReply>(stream);if(reply==null||!reply.Ok||reply.Id!="hello")throw new AuthenticationException("服务器拒绝配对认证。");
                 }catch{Dispose();throw;}
             }
         }

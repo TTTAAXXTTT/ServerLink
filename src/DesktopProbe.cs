@@ -32,6 +32,7 @@ namespace ServerLink
         public string WindowTitle { get; set; }
         public string ProcessVersion { get; set; }
         public int ProcessId { get; set; }
+        public string ProcessEpoch {get;set;}
         public int SessionId { get; set; }
         public string DocumentText { get; set; }
         public string Error { get; set; }
@@ -51,6 +52,7 @@ namespace ServerLink
             var candidates=Process.GetProcessesByName("Claude").Where(p=>p.MainWindowHandle!=IntPtr.Zero && p.SessionId==Process.GetCurrentProcess().SessionId).ToList();
             if(candidates.Count!=1) {result.Error="未找到唯一的当前用户 Claude 主窗口。请保持服务器原版 Claude 已打开。候选窗口数："+candidates.Count;return result;}
             var process=candidates[0];result.ProcessId=process.Id;result.SessionId=process.SessionId;result.WindowTitle=process.MainWindowTitle;
+            result.ProcessEpoch=process.Id+":"+process.StartTime.ToUniversalTime().Ticks;
             try{result.ProcessVersion=process.MainModule.FileVersionInfo.FileVersion;}catch{result.ProcessVersion="unknown";}
             Root=AutomationElement.FromHandle(process.MainWindowHandle);
             // Prefetch one coherent tree. Current property/pattern calls on every node caused

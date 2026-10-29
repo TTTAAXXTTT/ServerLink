@@ -34,6 +34,8 @@ namespace ServerLink
     }
     public static class SessionRuntime
     {
+        static readonly string build=ReadBuild();
+        static string ReadBuild(){try{return Secrets.Digest(File.ReadAllBytes(System.Reflection.Assembly.GetExecutingAssembly().Location));}catch{return "unavailable";}}
         [StructLayout(LayoutKind.Sequential)]struct Session {public int Id;public IntPtr Name;public int State;}
         [DllImport("wtsapi32.dll",CharSet=CharSet.Unicode)]static extern bool WTSEnumerateSessions(IntPtr server,int reserved,int version,out IntPtr buffer,out int count);
         [DllImport("wtsapi32.dll")]static extern bool WTSQuerySessionInformation(IntPtr server,int id,int kind,out IntPtr buffer,out int count);
@@ -44,7 +46,7 @@ namespace ServerLink
         static readonly string[] states={"Active","Connected","ConnectQuery","Shadow","Disconnected","Idle","Listen","Reset","Down","Init"};
         public static ServerRuntime Capture(string adapter)
         {
-            var result=new ServerRuntime {BridgeVersion=ApplicationInfo.Version,SessionId=Process.GetCurrentProcess().SessionId,Adapter=adapter,SessionState="Unknown",InputDesktop="Unavailable",ActiveRdpSessions=-1,Error=""};
+            var result=new ServerRuntime {BridgeVersion=ApplicationInfo.Version,BridgeBuild=build,SessionId=Process.GetCurrentProcess().SessionId,Adapter=adapter,SessionState="Unknown",InputDesktop="Unavailable",ActiveRdpSessions=-1,Error=""};
             try
             {
                 IntPtr buffer;int size;

@@ -38,31 +38,6 @@ namespace ServerLink
         }
         public void Dispose(){if(Certificate!=null)Certificate.Dispose();}
     }
-    public sealed class DesktopWorker : IDisposable
-    {
-        readonly BlockingCollection<Action> queue=new BlockingCollection<Action>(16);readonly Thread thread;IChatAdapter adapter;Exception initializationError;readonly string adapterMode;
-        public DesktopWorker(string directory)
-        {
-            var config=ServerConfiguration.Load();adapterMode=config.Adapter=="content"?"content":"desktop";
-            thread=new Thread(()=>{try{adapter=adapterMode=="content"?(IChatAdapter)new CdpAdapter(directory,config.ContentPort):new DesktopAdapter(directory);}catch(Exception ex){initializationError=ex;}foreach(var action in queue.GetConsumingEnumerable())action();});thread.IsBackground=true;thread.SetApartmentState(ApartmentState.STA);thread.Start();
-        }
-        public WireReply Handle(WireRequest request)
-        {
-            if(request.Op=="health")return new WireReply {Id=request.Id,Ok=true,State=new ChatState {Runtime=SessionRuntime.Capture(adapterMode),Error=initializationError==null?"":"接入组件初始化失败。"}};
-            var elapsed=Stopwatch.StartNew();
-            var completion=new TaskCompletionSource<WireReply>();if(!queue.TryAdd(()=>{
-                try
-                {
-                    long queued=elapsed.ElapsedMilliseconds;elapsed.Restart();
-                    if(initializationError!=null&&request.Op!="health")throw new InvalidOperationException("桥接数据无法读取，请检查服务器数据目录。",initializationError);ChatState state;
-                    switch(request.Op){case "health":state=new ChatState {Error=initializationError==null?"":"接入组件初始化失败。"};break;case "status":state=adapter.Read();break;case "open":state=adapter.Open(request.Handle);break;case "send":state=adapter.Send(request.Id,request.SessionId,request.Text);break;case "stop":state=adapter.Stop(request.SessionId);break;case "recover-draft":var recovery=adapter as IDraftRecoveryAdapter;if(recovery==null)throw new InvalidOperationException("当前接入方式不支持取回草稿。");state=recovery.RecoverDraft(request.SessionId,request.Text);break;default:throw new ArgumentException("不支持的操作。");}
-                    state.Runtime=SessionRuntime.Capture(adapterMode);state.Runtime.QueueMilliseconds=queued;state.Runtime.OperationMilliseconds=elapsed.ElapsedMilliseconds;completion.SetResult(new WireReply {Id=request.Id,Ok=true,State=state});
-                }catch(Exception ex){completion.SetResult(new WireReply {Id=request.Id,Ok=false,Error=ex.Message,ErrorCode=ex is RequestNotSubmittedException?"not_submitted":null});}
-            }))return new WireReply {Id=request.Id,Ok=false,Error="服务器操作队列已满，请稍后重试。"};
-            if(!completion.Task.Wait(26000))return new WireReply {Id=request.Id,Ok=false,Error="服务器界面读取超时，操作结果需要核对。请勿重复发送。"};return completion.Task.Result;
-        }
-        public void Dispose(){queue.CompleteAdding();}
-    }
     public sealed class BridgeServer : IDisposable
     {
         readonly AgentIdentity identity;readonly Func<WireRequest,WireReply> handler;readonly SemaphoreSlim capacity=new SemaphoreSlim(4);readonly ConcurrentDictionary<TcpClient,byte> clients=new ConcurrentDictionary<TcpClient,byte>();
@@ -91,11 +66,11 @@ namespace ServerLink
                 {
                     tls.AuthenticateAsServer(identity.Certificate,false,SslProtocols.Tls12,false);var first=Frame.Read<WireRequest>(tls);
                     if(first==null||first.Op!="hello"||first.Id!="hello"||!Secrets.Equal(first.Token,identity.Token)){Frame.Write(tls,new WireReply {Id="hello",Ok=false,Error="配对认证失败。"});return;}
-                    Frame.Write(tls,new WireReply {Id="hello",Ok=true});if(Status!=null)Status("客户端已通过配对认证。");client.ReceiveTimeout=45000;client.SendTimeout=30000;
+                    string owner=String.IsNullOrEmpty(first.ClientId)?Guid.NewGuid().ToString("N"):first.ClientId;if(owner.Length>100)throw new IOException("Invalid controller ID.");Frame.Write(tls,new WireReply {Id="hello",Ok=true});if(Status!=null)Status("客户端已通过配对认证。");client.ReceiveTimeout=45000;client.SendTimeout=30000;
                     for(int i=0;i<20000&&!stopped;i++)
                     {
                         var request=Frame.Read<WireRequest>(tls);if(request==null||String.IsNullOrWhiteSpace(request.Id)||request.Id.Length>100)throw new IOException("请求格式无效。");
-                        Frame.Write(tls,handler(request));
+                        request.Owner=owner;Frame.Write(tls,handler(request));
                     }
                 }
             }catch(IOException){}catch(AuthenticationException){}catch(System.Security.Cryptography.CryptographicException){}catch(Exception){if(Status!=null)Status("客户端连接结束或数据无效。");}
