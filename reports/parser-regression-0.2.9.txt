@@ -1,0 +1,10 @@
+PASS 150 message groups retain their roles and exact text; toolbar excluded. Parse ms=11
+PASS Truncated snapshots block sending.
+PASS Non-chat routes with an editor do not permit sends.
+PASS A blank route containing old chat messages is considered loading.
+PASS New-chat entries require a sidebar ancestor; page availability is explicit.
+PASS Observed Chromium paragraph nodes, explicit newline nodes and indentation survive readback.
+PASS CRLF and exactly one extra UIA newline accepted; changed text or extra blank lines rejected.
+PASS Recovery requires exact session/text and latest prepared stage; unknown/submitting outcome rejected.
+PASS Protocol frame uses one write with a correct length prefix and unchanged payload.
+RESULT PASS. Pure data fixtures; no desktop, socket, server or credentials accessed.

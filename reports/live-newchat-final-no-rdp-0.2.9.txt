@@ -1,0 +1,16 @@
+PASS Existing saved pairing TLS connection and server read
+INFO Bridge=0.2.9 Claude=4.29.0 PageKind=chat ContextPresent=True CanSend=True Generating=False Create=True RDP=0 Error=
+INFO BridgeBuild=a243633548afebbe910f54e5fe05418b25cacca956e6b2c2a917a3ffb3029e10
+PASS Running server binary hash matches the exact packaged build
+PASS Server reports new-chat capability
+PASS No original server draft or active reply
+PASS Server has zero active RDP sessions before exercise
+PASS Unique dedicated original test chat found
+PASS Client opens a real blank chat and isolates the old local draft
+PASS First message is confirmed in a new formal chat and its submitted draft clears
+PASS Exactly one matching test user message and a real assistant reply
+INFO Marker=SL029-20261029101700-8e9d45f4 FormalIdPresent=True
+PASS RDP remains disconnected after real reply
+PASS Original chat remains available after creating the new chat
+PASS Returning to the old chat restores its own local draft
+RESULT PASS. Mode=live new-chat send

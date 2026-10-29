@@ -1,0 +1,9 @@
+PASS A repeated ID is never executed twice and a different payload is rejected
+PASS An expired queued write cannot later be claimed
+PASS A timeout cannot cancel a task already claimed
+PASS Unknown Invoke outcomes block all later writes including other controllers
+PASS Crash recovery cancels queued tasks but preserves an Invoke boundary
+PASS Initial journal failure prevents request admission
+PASS First message binds only with matching context, process, first user body and formal page
+PASS Old identical messages cannot confirm a later send
+RESULT PASS. Pure ledger fixtures; no Agent, listener, credentials or live Claude.
