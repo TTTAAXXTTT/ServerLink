@@ -28,6 +28,10 @@ namespace ServerLink
         internal string TestConversation {get{return conversation.Text;}}
         internal bool TestHistoryEnabled {get{return history.Enabled;}}
         internal Task TestRecoverDraft(){return RecoverServerDraft();}
+        internal Task TestCreate(){return CreateChat();}
+        internal bool TestCreateEnabled {get{return newChat.Enabled;}}
+        internal bool TestActionPending {get{return pendingAction!=null;}}
+        internal void TestClear(){composer.Clear();UpdateControls();}
     }
     sealed class ClientFakeTransport : IBridgeConnection
     {
@@ -173,6 +177,47 @@ namespace ServerLink
             });
             await Check("Delayed draft clearing is confirmed by a fresh whitespace-only UIA value without another mutation",async()=>{
                 var initial=State();initial.DraftText="recover this";initial.DraftRecoveryAvailable=true;var transport=new ClientFakeTransport {OnCall=request=>request.Op=="recover-draft"?new WireReply {Id=request.Id,Ok=false,Error="草稿已备份，但未确认服务器输入框已清空，请刷新核对。"}:Ok(request,new ChatState {SessionId="session-a",CanSend=true,DraftText="\n"})};using(var form=View(transport,initial)){form.TestDraft("recover this");await form.TestRecoverDraft();Assert(transport.Count("recover-draft")==1&&form.TestSendEnabled&&form.TestDraftText=="recover this","Delayed UIA update left recovery locked");}
+            });
+            await Check("Create is unavailable on an old server",async()=>{var transport=new ClientFakeTransport {OnCall=r=>Ok(r,State())};using(var form=View(transport,State())){Assert(!form.TestCreateEnabled,"Old server exposed Create");await form.TestCreate();Assert(transport.Count("create-chat")==0,"Unsupported create sent");}});
+            await Check("An acknowledged create preserves the old draft and restores it on return",async()=>{
+                var initial=State();initial.ContextId="context-a";initial.PageKind="chat";initial.Capabilities.Add("create-chat-v1");
+                var blank=State("new:context-b");blank.ContextId="context-b";blank.PageKind="blank";blank.Capabilities.Add("create-chat-v1");
+                var transport=new ClientFakeTransport {OnCall=r=>Ok(r,r.Op=="create-chat"?blank:initial)};
+                using(var form=View(transport,initial)){form.TestDraft("old draft");await form.TestCreate();Assert(transport.Count("create-chat")==1&&form.TestState.SessionId==blank.SessionId&&form.TestDraftText=="","Create failed or old text leaked");await form.TestOpen("old");Assert(form.TestDraftText=="old draft","Old draft not restored");}
+            });
+            await Check("An existing blank chat is reused without another create request",async()=>{
+                var initial=State("new:context");initial.ContextId="context";initial.PageKind="blank";initial.Capabilities.Add("create-chat-v1");var transport=new ClientFakeTransport {OnCall=r=>Ok(r,initial)};
+                using(var form=View(transport,initial)){form.TestDraft("keep blank draft");await form.TestCreate();Assert(transport.Count("create-chat")==0&&form.TestDraftText=="keep blank draft","Blank draft was replaced");}
+            });
+            await Check("Server drafts prevent creating a new chat",async()=>{
+                var initial=State();initial.Capabilities.Add("create-chat-v1");initial.DraftText="server draft";var transport=new ClientFakeTransport {OnCall=r=>Ok(r,initial)};
+                using(var form=View(transport,initial)){await form.TestCreate();Assert(transport.Count("create-chat")==0,"Server draft ignored");}
+            });
+            await Check("Unknown creation blocks repeat clicks and local text clearing cannot unlock it",async()=>{
+                var initial=State();initial.ContextId="old-context";initial.Capabilities.Add("create-chat-v1");var transport=new ClientFakeTransport {OnCall=r=>new WireReply {Id=r.Id,Ok=false,ErrorCode="outcome_unknown",Error="fixture unknown"}};
+                using(var form=View(transport,initial)){await form.TestCreate();form.TestClear();await form.TestCreate();Assert(form.TestActionPending&&!form.TestCreateEnabled&&transport.Count("create-chat")==1,"Unknown create unlocked");}
+            });
+            await Check("First-message promotion requires the server receipt and preserves later edited text",async()=>{
+                var initial=State("new:context");initial.ContextId="context";initial.PageKind="blank";var transport=new ClientFakeTransport();
+                transport.OnCall=r=>{var actual=State("formal-chat");actual.ContextId="context";actual.PageKind="chat";actual.TotalMessages=1;actual.Messages.Add(new ChatMessage {Index=1,Role="user",Text=r.Text});actual.Operations.Add(new OperationReceipt {Id=r.Id,Kind="send",Phase="confirmed",ContextId="context",SessionId="formal-chat"});return Ok(r,actual);};
+                using(var form=View(transport,initial)){form.TestDraft("first message");await form.TestSend();Assert(!form.TestPending&&form.TestDraftText==""&&form.TestState.SessionId=="formal-chat","First message remained pending");}
+            });
+            await Check("Another formal chat with the same first body cannot confirm a blank send",async()=>{
+                var initial=State("new:context");initial.ContextId="context";initial.PageKind="blank";var transport=new ClientFakeTransport {OnCall=r=>{var actual=State("another");actual.ContextId="other-context";actual.PageKind="chat";actual.Messages.Add(new ChatMessage {Index=1,Role="user",Text=r.Text});return Ok(r,actual);}};
+                using(var form=View(transport,initial)){form.TestDraft("same body");await form.TestSend();Assert(form.TestPending&&form.TestDraftText=="same body","Foreign first message accepted");}
+            });
+            await Check("A storage error after dispatch does not declare a send unsubmitted",async()=>{
+                var transport=new ClientFakeTransport {OnCall=r=>new WireReply {Id=r.Id,Ok=false,ErrorCode="storage_error",Error="fixture journal failure"}};
+                using(var form=View(transport,State())){form.TestDraft("preserve unknown result");await form.TestSend();Assert(form.TestPending&&!form.TestSendEnabled&&form.TestDraftText!="","Storage fault unlocked an unknown submission");}
+            });
+            await Check("Later terminal action receipts restore a disconnected create without issuing another create",async()=>{
+                var initial=State();initial.PageKind="chat";initial.ContextId="old";initial.Capabilities.Add("create-chat-v1");string id=null;
+                var transport=new ClientFakeTransport {OnCall=r=>{id=r.Id;return new WireReply {Id=r.Id,Ok=false,ErrorCode="outcome_unknown",Error="fixture response lost"};}};
+                using(var form=View(transport,initial)){form.TestDraft("original draft");await form.TestCreate();var actual=State("new:next");actual.PageKind="blank";actual.ContextId="next";actual.Operations.Add(new OperationReceipt {Id=id,Kind="create-chat",Phase="confirmed",ContextId="next",SessionId=actual.SessionId});form.TestRender(actual);Assert(!form.TestActionPending&&form.TestDraftText==""&&transport.Count("create-chat")==1,"Create receipt failed to resolve safely");}
+            });
+            await Check("Per-session drafts and unresolved navigation survive the versioned storage format",async()=>{
+                var original=new LocalClientDraft {FormatVersion=2,Text="current",SessionId="chat-b",Action=new PendingClientAction {Id="request",Kind="create-chat",SourceSession="chat-a",StartedUtc=DateTime.UtcNow},Drafts=new List<SavedClientDraft> {new SavedClientDraft {Server="server",Session="chat-a",Text="old draft"},new SavedClientDraft {Server="server",Session="chat-b",Text="current"}}};
+                var restored=Json.Read<LocalClientDraft>(Json.Write(original));Assert(restored.FormatVersion==2&&restored.Action.Id=="request"&&restored.Drafts.Count==2&&restored.Drafts[0].Text=="old draft","Navigation/draft data lost");await Task.Yield();
             });
             results.Add("RESULT "+(failures==0?"PASS":"FAIL")+". Isolated client-only in-memory transport; no server Agent, TLS listener, pairing credentials or Claude access.");Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(report)));File.WriteAllLines(report,results);Environment.ExitCode=failures==0?0:1;Close();
         }
